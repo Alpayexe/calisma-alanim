@@ -4,7 +4,6 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const fmtShort = (iso) => iso ? new Date(iso).toLocaleDateString("tr-TR", { day: "numeric", month: "short" }) : "";
 const daysInMonth = (y, m) => new Date(y, m + 1, 0).getDate();
-// Pazartesi=0 ... Pazar=6
 const firstDay = (y, m) => { let d = new Date(y, m, 1).getDay(); return d === 0 ? 6 : d - 1; };
 const MONTHS = ["Ocak","Şubat","Mart","Nisan","Mayıs","Haziran","Temmuz","Ağustos","Eylül","Ekim","Kasım","Aralık"];
 const DAYS_LONG = ["Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi","Pazar"];
@@ -13,7 +12,6 @@ const HOURS = Array.from({length:24},(_,i)=>i);
 const FONT = "'Inter','SF Pro Display',system-ui,-apple-system,sans-serif";
 const RECUR_OPTS = [{v:"none",l:"Tekrar yok"},{v:"daily",l:"Her gün"},{v:"weekly",l:"Her hafta"},{v:"monthly",l:"Her ay"}];
 
-// Haftanın günü indeksi (Pzt=0, Paz=6)
 const getDayIndex = (date) => { const d = date.getDay(); return d === 0 ? 6 : d - 1; };
 const getWeekStart = (date) => {
   const d = new Date(date);
@@ -36,10 +34,25 @@ const DEFAULT_EVCATS=[{id:"c1",name:"İş",colorId:"blue"},{id:"c2",name:"Kişis
 const evCol=(cid)=>(EV_COLORS.find(c=>c.id===cid)||EV_COLORS[0]).l;
 const POMODORO_WORK=25*60, POMODORO_BREAK=5*60;
 
-// XP per level = level * 200
+// ── Gamification ─────────────────────────────────────────────────────────────
 const xpForLevel = (lvl) => lvl * 200;
 const XP_PER_TODO = 50;
 const GOLD_PER_TODO = 10;
+
+// ── RPG Stat nitelikleri ──────────────────────────────────────────────────────
+const STAT_KEYS = ["INT","DEX","FOC","VIT"];
+const STAT_LABELS = {INT:"Zeka",DEX:"Çeviklik",FOC:"Odak",VIT:"Dayanıklılık"};
+const STAT_COLORS = {INT:"#4A90E2",DEX:"#5BAD6F",FOC:"#9B6BE2",VIT:"#E2934A"};
+const STAT_ICONS  = {INT:"🧠",DEX:"⚡",FOC:"🎯",VIT:"❤️"};
+
+// ── Varsayılan Todo Kategorileri (ID tabanlı) ─────────────────────────────────
+const DEFAULT_TODO_CATS = [
+  {id:"tc1", name:"Genel",    emoji:"📋", stat:"FOC"},
+  {id:"tc2", name:"İş",       emoji:"💼", stat:"INT"},
+  {id:"tc3", name:"Sağlık",   emoji:"❤️", stat:"VIT"},
+  {id:"tc4", name:"Öğrenme",  emoji:"📚", stat:"INT"},
+  {id:"tc5", name:"Egzersiz", emoji:"🏋️", stat:"DEX"},
+];
 
 const SHOP_ITEMS = [
   {id:"s1",name:"☕ Kahve Molası",desc:"Hak ettin, bir fincan kahve!",cost:50},
@@ -50,12 +63,12 @@ const SHOP_ITEMS = [
   {id:"s6",name:"🛁 Spa Günü",desc:"Kendine iyi bak.",cost:800},
 ];
 
-const saveData = async (d) => { try { await window.storage.set("napp-v6", JSON.stringify(d)); } catch {} };
-const loadData = async () => { try { const r=await window.storage.get("napp-v6"); if(r) return JSON.parse(r.value); } catch {} return null; };
+const saveData = async (d) => { try { await window.storage.set("napp-v7", JSON.stringify(d)); } catch {} };
+const loadData = async () => { try { const r=await window.storage.get("napp-v7"); if(r) return JSON.parse(r.value); } catch {} return null; };
 const defEf=()=>({title:"",date:todayStr(),startTime:"09:00",endTime:"10:00",colorId:"blue",catId:"c1",desc:"",allDay:false,recur:"none"});
-const defTf=()=>({title:"",notes:"",groupId:"g1",dueDate:"",dueTime:"",priority:"orta",subtasks:[],tags:[],linkedNoteId:""});
+const defTf=()=>({title:"",notes:"",todoCatId:"tc1",dueDate:"",dueTime:"",priority:"orta",subtasks:[],tags:[],linkedNoteId:""});
 
-// Konfeti
+// ── Konfeti ───────────────────────────────────────────────────────────────────
 const Confetti=({active,onDone})=>{
   const canvasRef=useRef();
   useEffect(()=>{
@@ -87,6 +100,40 @@ const Confetti=({active,onDone})=>{
   return <canvas ref={canvasRef} style={{position:"fixed",inset:0,zIndex:9999,pointerEvents:"none"}}/>;
 };
 
+// ── Radar Chart (SVG) ─────────────────────────────────────────────────────────
+const RadarChart=({stats,T})=>{
+  const size=160, cx=80, cy=80, r=58;
+  const keys=STAT_KEYS;
+  const n=keys.length;
+  const maxVal=200;
+  const angle=(i)=>((i/n)*2*Math.PI)-Math.PI/2;
+  const pt=(i,val)=>{
+    const ratio=Math.min(val/maxVal,1);
+    return {x:cx+r*ratio*Math.cos(angle(i)), y:cy+r*ratio*Math.sin(angle(i))};
+  };
+  const axPt=(i,ratio=1)=>({x:cx+r*ratio*Math.cos(angle(i)), y:cy+r*ratio*Math.sin(angle(i))});
+  const polyPts=keys.map((k,i)=>pt(i,stats[k]||0));
+  const polyStr=polyPts.map(p=>`${p.x},${p.y}`).join(" ");
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+      {[0.25,0.5,0.75,1].map(ratio=>(
+        <polygon key={ratio} points={keys.map((_,i)=>{const p=axPt(i,ratio);return `${p.x},${p.y}`;}).join(" ")}
+          fill="none" stroke={T.border} strokeWidth="0.8" opacity="0.6"/>
+      ))}
+      {keys.map((_,i)=>{const p=axPt(i);return <line key={i} x1={cx} y1={cy} x2={p.x} y2={p.y} stroke={T.border} strokeWidth="0.8" opacity="0.5"/>;})}
+      <polygon points={polyStr} fill={`rgba(155,107,226,0.25)`} stroke="#9B6BE2" strokeWidth="1.5"/>
+      {polyPts.map((p,i)=><circle key={i} cx={p.x} cy={p.y} r="3" fill={STAT_COLORS[keys[i]]}/>)}
+      {keys.map((k,i)=>{
+        const lp=axPt(i,1.22);
+        return <text key={k} x={lp.x} y={lp.y} textAnchor="middle" dominantBaseline="middle"
+          fontSize="8" fill={T.muted} fontFamily={FONT} fontWeight="600">
+          {STAT_ICONS[k]} {k}
+        </text>;
+      })}
+    </svg>
+  );
+};
+
 export default function App() {
   const [dk,setDk]=useState(true); const T=dk?DK:LT;
   const [tab,setTab]=useState("dashboard");
@@ -94,6 +141,9 @@ export default function App() {
   const [nCats,setNCats]=useState(["Genel","İş","Kişisel","Fikirler"]);
   const [todos,setTodos]=useState([]);
   const [archived,setArchived]=useState([]);
+  // ── Todo Kategorileri (yeni, dinamik) ──
+  const [todoCats,setTodoCats]=useState(DEFAULT_TODO_CATS);
+  // eski groups hâlâ arşiv için saklanıyor ama artık yeni todolarda kullanılmıyor
   const [groups,setGroups]=useState([{id:"g1",name:"Genel",ci:0},{id:"g2",name:"İş",ci:1}]);
   const [events,setEvents]=useState([]);
   const [evCats,setEvCats]=useState(DEFAULT_EVCATS);
@@ -121,10 +171,8 @@ export default function App() {
   const [showTF,setShowTF]=useState(false);
   const [editTId,setEditTId]=useState(null);
   const [tf,setTf]=useState(defTf());
-  const [aGrp,setAGrp]=useState("Tümü");
+  const [aTodoCat,setATodoCat]=useState("Tümü");
   const [aTag,setATag]=useState("");
-  const [showGF,setShowGF]=useState(false);
-  const [gf,setGf]=useState({name:"",ci:0});
   const [newSub,setNewSub]=useState("");
   const [newTag,setNewTag]=useState("");
   const [pom,setPom]=useState({active:false,mode:"work",remaining:POMODORO_WORK,todoId:null,running:false});
@@ -134,13 +182,21 @@ export default function App() {
   const [xp,setXp]=useState(0);
   const [level,setLevel]=useState(1);
   const [gold,setGold]=useState(0);
+  const [stats,setStats]=useState({INT:0,DEX:0,FOC:0,VIT:0});
   const [confetti,setConfetti]=useState(false);
   const [levelUpMsg,setLevelUpMsg]=useState(false);
   const [purchasedItems,setPurchasedItems]=useState([]);
   const [shopMsg,setShopMsg]=useState("");
 
+  // ── Kategori Yönetim Paneli state ─────────────────────────────────────────
+  const [showCatMgr,setShowCatMgr]=useState(false);
+  const [catForm,setCatForm]=useState({name:"",emoji:"📋",stat:"FOC"});
+  const [editCatId,setEditCatId]=useState(null);
+  const [deleteCatConfirm,setDeleteCatConfirm]=useState(null); // {catId, catName}
+
   const imgRef=useRef(); const nTRef=useRef(); const tTRef=useRef(); const gridRef=useRef();
 
+  // ── Load ──────────────────────────────────────────────────────────────────
   useEffect(()=>{
     (async()=>{
       const d=await loadData();
@@ -148,10 +204,12 @@ export default function App() {
         setNotes(d.notes||[]); setNCats(d.nCats||["Genel","İş","Kişisel","Fikirler"]);
         setTodos(d.todos||[]); setArchived(d.archived||[]);
         setGroups(d.groups||[{id:"g1",name:"Genel",ci:0}]);
+        setTodoCats(d.todoCats||DEFAULT_TODO_CATS);
         setEvents(d.events||[]); setEvCats(d.evCats||DEFAULT_EVCATS);
         setHiddenCats(d.hiddenCats||[]); setAllTags(d.allTags||["acil","bekliyor","alışveriş","fikir"]);
         setDk(d.dk!==undefined?d.dk:true);
         setXp(d.xp||0); setLevel(d.level||1); setGold(d.gold||0);
+        setStats(d.stats||{INT:0,DEX:0,FOC:0,VIT:0});
         setPurchasedItems(d.purchasedItems||[]);
       }
       setLoaded(true);
@@ -172,29 +230,76 @@ export default function App() {
   },[pom.running]);
 
   const saveAll=useCallback((patch={})=>{
-    const s={notes,nCats,todos,archived,groups,events,evCats,hiddenCats,allTags,dk,xp,level,gold,purchasedItems,...patch};
+    const s={notes,nCats,todos,archived,groups,todoCats,events,evCats,hiddenCats,allTags,dk,xp,level,gold,stats,purchasedItems,...patch};
     saveData(s);
-  },[notes,nCats,todos,archived,groups,events,evCats,hiddenCats,allTags,dk,xp,level,gold,purchasedItems]);
+  },[notes,nCats,todos,archived,groups,todoCats,events,evCats,hiddenCats,allTags,dk,xp,level,gold,stats,purchasedItems]);
 
-  // XP & Gold kazanma
-  const earnRewards=(patch={})=>{
+  // ── XP & Gold & Stat kazanma ──────────────────────────────────────────────
+  const earnRewards=(todoItem, patch={})=>{
+    // Hangi stat artacak?
+    const cat=todoCats.find(c=>c.id===todoItem?.todoCatId);
+    const statKey=cat?.stat||"FOC";
+    const curStats={...(patch.stats||stats)};
+    curStats[statKey]=(curStats[statKey]||0)+10;
+
     const curXp=(patch.xp!==undefined?patch.xp:xp)+XP_PER_TODO;
     const curGold=(patch.gold!==undefined?patch.gold:gold)+GOLD_PER_TODO;
     const curLevel=patch.level!==undefined?patch.level:level;
     const needed=xpForLevel(curLevel);
     setConfetti(true);
+    setStats(curStats);
     if(curXp>=needed){
       const newLevel=curLevel+1;
       const leftover=curXp-needed;
       setLevel(newLevel); setXp(leftover); setGold(curGold);
       setLevelUpMsg(true); setTimeout(()=>setLevelUpMsg(false),2500);
-      return {xp:leftover,level:newLevel,gold:curGold};
+      return {xp:leftover,level:newLevel,gold:curGold,stats:curStats};
     } else {
       setXp(curXp); setGold(curGold);
-      return {xp:curXp,level:curLevel,gold:curGold};
+      return {xp:curXp,level:curLevel,gold:curGold,stats:curStats};
     }
   };
 
+  // ── Kategori Yönetimi (CRUD) ──────────────────────────────────────────────
+  const openNewCat=()=>{ setEditCatId(null); setCatForm({name:"",emoji:"📋",stat:"FOC"}); };
+  const openEditCat=(cat)=>{ setEditCatId(cat.id); setCatForm({name:cat.name,emoji:cat.emoji,stat:cat.stat}); };
+
+  const saveCat=()=>{
+    if(!catForm.name.trim()) return;
+    let updated;
+    if(editCatId){
+      updated=todoCats.map(c=>c.id===editCatId?{...c,...catForm,name:catForm.name.trim()}:c);
+    } else {
+      updated=[...todoCats,{id:uid(),name:catForm.name.trim(),emoji:catForm.emoji,stat:catForm.stat}];
+    }
+    setTodoCats(updated);
+    saveAll({todoCats:updated});
+    setEditCatId(null);
+    setCatForm({name:"",emoji:"📋",stat:"FOC"});
+  };
+
+  const requestDeleteCat=(cat)=>{
+    const inUse=todos.filter(t=>t.todoCatId===cat.id).length;
+    if(inUse>0){
+      setDeleteCatConfirm({catId:cat.id,catName:cat.name,inUse});
+    } else {
+      doDeleteCat(cat.id, null);
+    }
+  };
+
+  const doDeleteCat=(catId, fallbackCatId)=>{
+    // fallback: null → "Genel" (tc1), ya da belirtilen
+    const fallback=fallbackCatId||(todoCats.find(c=>c.id!==catId)?.id||null);
+    const updatedTodos=todos.map(t=>t.todoCatId===catId?{...t,todoCatId:fallback}:t);
+    const updatedCats=todoCats.filter(c=>c.id!==catId);
+    setTodos(updatedTodos);
+    setTodoCats(updatedCats);
+    if(aTodoCat===catId) setATodoCat("Tümü");
+    saveAll({todos:updatedTodos,todoCats:updatedCats});
+    setDeleteCatConfirm(null);
+  };
+
+  // ── Takvim helpers ────────────────────────────────────────────────────────
   const expandEvents=(evs,ds)=>{
     const res=[];
     evs.forEach(e=>{
@@ -239,7 +344,7 @@ export default function App() {
     const u=todos.map(t=>t.id===id?{...t,done:!t.done}:t);
     setTodos(u);
     if(wasUndone){
-      const rewards=earnRewards();
+      const rewards=earnRewards(todo);
       saveAll({todos:u,...rewards});
     } else {
       saveAll({todos:u});
@@ -249,11 +354,11 @@ export default function App() {
   const archiveDone=()=>{const done=todos.filter(t=>t.done);const remain=todos.filter(t=>!t.done);const newArch=[...archived,...done.map(t=>({...t,archivedAt:Date.now()}))];setTodos(remain);setArchived(newArch);saveAll({todos:remain,archived:newArch});};
   const delTodo=(id)=>{const u=todos.filter(t=>t.id!==id);setTodos(u);saveAll({todos:u});};
   const toggleSub=(tid,sid)=>{const u=todos.map(t=>t.id===tid?{...t,subtasks:t.subtasks.map(s=>s.id===sid?{...s,done:!s.done}:s)}:t);setTodos(u);saveAll({todos:u});};
-  const openET=(t)=>{setEditTId(t.id);setTf({title:t.title,notes:t.notes||"",groupId:t.groupId,dueDate:t.dueDate||"",dueTime:t.dueTime||"",priority:t.priority||"orta",subtasks:t.subtasks||[],tags:t.tags||[],linkedNoteId:t.linkedNoteId||""});setShowTF(true);};
-  const addGroup=()=>{if(!gf.name.trim())return;const g={id:uid(),name:gf.name.trim(),ci:gf.ci};const u=[...groups,g];setGroups(u);saveAll({groups:u});setShowGF(false);setGf({name:"",ci:0});};
+  const openET=(t)=>{setEditTId(t.id);setTf({title:t.title,notes:t.notes||"",todoCatId:t.todoCatId||todoCats[0]?.id||"tc1",dueDate:t.dueDate||"",dueTime:t.dueTime||"",priority:t.priority||"orta",subtasks:t.subtasks||[],tags:t.tags||[],linkedNoteId:t.linkedNoteId||""});setShowTF(true);};
+
   const addSub=()=>{const t=newSub.trim();if(!t)return;setTf(f=>({...f,subtasks:[...f.subtasks,{id:uid(),title:t,done:false}]}));setNewSub("");};
   const addTfTag=(tag)=>{if(!tf.tags.includes(tag))setTf(f=>({...f,tags:[...f.tags,tag]}));setNewTag("");};
-  const getG=(id)=>groups.find(g=>g.id===id);
+  const getTodoCat=(id)=>todoCats.find(c=>c.id===id);
 
   const buyItem=(item)=>{
     if(gold<item.cost){setShopMsg("❌ Yeterli altın yok!");setTimeout(()=>setShopMsg(""),2000);return;}
@@ -267,7 +372,7 @@ export default function App() {
 
   const sq=search.toLowerCase();
   const fNotes=notes.filter(n=>(aCat==="Tümü"||n.category===aCat)&&(!sq||n.title.toLowerCase().includes(sq)||n.content.toLowerCase().includes(sq)));
-  const fTodos=todos.filter(t=>(aGrp==="Tümü"||t.groupId===aGrp)&&(aTag===""||( t.tags||[]).includes(aTag))&&(!sq||t.title.toLowerCase().includes(sq)));
+  const fTodos=todos.filter(t=>(aTodoCat==="Tümü"||t.todoCatId===aTodoCat)&&(aTag===""||( t.tags||[]).includes(aTag))&&(!sq||t.title.toLowerCase().includes(sq)));
 
   const calCells=()=>{const tot=daysInMonth(calY,calM);const st=firstDay(calY,calM);const c=[];for(let i=0;i<st;i++)c.push(null);for(let d=1;d<=tot;d++)c.push(d);return c;};
   const weekDays=Array.from({length:7},(_,i)=>addDays(weekStart,i));
@@ -349,7 +454,7 @@ export default function App() {
       <Confetti active={confetti} onDone={()=>setConfetti(false)}/>
 
       {/* LEVEL UP */}
-      {levelUpMsg&&<div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:9998,background:"linear-gradient(135deg,#9B6BE2,#4A90E2)",borderRadius:"16px",padding:"2rem 3rem",textAlign:"center",boxShadow:"0 0 60px rgba(155,107,226,0.6)",animation:"pulse 0.5s ease"}}>
+      {levelUpMsg&&<div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:9998,background:"linear-gradient(135deg,#9B6BE2,#4A90E2)",borderRadius:"16px",padding:"2rem 3rem",textAlign:"center",boxShadow:"0 0 60px rgba(155,107,226,0.6)"}}>
         <div style={{fontSize:"2.5rem",marginBottom:"0.3rem"}}>⬆️</div>
         <div style={{fontSize:"1.5rem",fontWeight:"800",color:"#fff",letterSpacing:"-0.04em"}}>LEVEL UP!</div>
         <div style={{fontSize:"0.9rem",color:"rgba(255,255,255,0.8)",marginTop:"0.3rem"}}>Seviye {level} oldun! 🎉</div>
@@ -362,6 +467,8 @@ export default function App() {
           {TABS.map(([k,l])=>(
             <button key={k} onClick={()=>setTab(k)} style={{background:tab===k?"rgba(255,255,255,0.13)":"transparent",color:tab===k?"rgba(255,255,255,0.95)":"rgba(255,255,255,0.36)",border:"none",borderRadius:"6px",padding:"0.22rem 0.52rem",cursor:"pointer",fontSize:"0.68rem",fontFamily:FONT,fontWeight:"600",whiteSpace:"nowrap"}}>{l}</button>
           ))}
+          {/* Ayarlar / Kategori Yönetimi */}
+          <button onClick={()=>setShowCatMgr(true)} style={{background:"transparent",color:"rgba(255,255,255,0.36)",border:"none",borderRadius:"6px",padding:"0.22rem 0.52rem",cursor:"pointer",fontSize:"0.68rem",fontFamily:FONT,fontWeight:"600",whiteSpace:"nowrap"}}>⚙️ Kategoriler</button>
         </div>
         {pom.active&&<div style={{marginLeft:"auto",background:"rgba(255,80,80,0.18)",border:"1px solid rgba(255,80,80,0.35)",borderRadius:"8px",padding:"0.18rem 0.6rem",color:"#FF6B6B",fontSize:"0.7rem",fontWeight:"700",cursor:"pointer",flexShrink:0}} onClick={()=>setTab("pomodoro")}>🍅 {pomMins}:{pomSecs}</div>}
         <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Ara…" style={{marginLeft:pom.active?"0.3rem":"auto",background:"rgba(255,255,255,0.08)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:"6px",padding:"0.22rem 0.6rem",color:"rgba(255,255,255,0.85)",fontFamily:FONT,fontSize:"0.7rem",width:130,outline:"none",flexShrink:0}} />
@@ -381,6 +488,14 @@ export default function App() {
         <div style={{flex:1,height:6,background:T.border,borderRadius:3,overflow:"hidden"}}>
           <div style={{height:"100%",width:`${xpPct}%`,background:"linear-gradient(90deg,#9B6BE2,#4A90E2)",borderRadius:3,transition:"width 0.5s ease"}}/>
         </div>
+        {/* Stat mini göstergeler */}
+        <div style={{display:"flex",gap:"0.35rem"}}>
+          {STAT_KEYS.map(k=>(
+            <div key={k} title={STAT_LABELS[k]} style={{display:"flex",alignItems:"center",gap:"0.18rem",fontSize:"0.6rem",color:STAT_COLORS[k],fontWeight:"700"}}>
+              <span>{STAT_ICONS[k]}</span><span>{stats[k]||0}</span>
+            </div>
+          ))}
+        </div>
         {/* Gold */}
         <div style={{display:"flex",alignItems:"center",gap:"0.3rem",background:dk?"rgba(255,200,50,0.1)":"rgba(255,180,0,0.1)",border:"1px solid rgba(255,180,0,0.3)",borderRadius:"20px",padding:"0.2rem 0.6rem",cursor:"pointer"}} onClick={()=>setTab("ödüller")}>
           <span style={{fontSize:"0.9rem"}}>🪙</span>
@@ -397,9 +512,20 @@ export default function App() {
             <div style={{marginTop:"0.26rem"}}>{showCI?<div style={{display:"flex",gap:"0.2rem"}}><input value={newCat} onChange={e=>setNewCat(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addNCat()} placeholder="Kategori" autoFocus style={{...inp,padding:"0.25rem 0.4rem",fontSize:"0.68rem"}}/><button onClick={addNCat} style={{...btn(),padding:"0.25rem 0.48rem"}}>+</button></div>:<button onClick={()=>setShowCI(true)} style={{background:"transparent",border:`1px dashed ${T.border}`,borderRadius:"6px",padding:"0.26rem 0.52rem",color:T.faint,cursor:"pointer",fontSize:"0.66rem",fontFamily:FONT,width:"100%",textAlign:"left"}}>+ Kategori ekle</button>}</div>
           </>}
           {tab==="todolar"&&<>
-            {lbl("Gruplar")}
-            {["Tümü",...groups.map(g=>g.id)].map(gid=>{const g=gid==="Tümü"?null:getG(gid);return <button key={gid} onClick={()=>setAGrp(gid)} style={sBtn(aGrp===gid)}>{g&&<span style={{width:7,height:7,borderRadius:"50%",background:T.gc[g.ci],flexShrink:0,display:"inline-block"}}/>}<span style={{flex:1}}>{gid==="Tümü"?"Tümü":g?.name}</span><span style={{opacity:0.36,fontSize:"0.62rem"}}>{gid==="Tümü"?todos.length:todos.filter(t=>t.groupId===gid).length}</span></button>;})}
-            <button onClick={()=>setShowGF(true)} style={{background:"transparent",border:`1px dashed ${T.border}`,borderRadius:"6px",padding:"0.26rem 0.52rem",color:T.faint,cursor:"pointer",fontSize:"0.66rem",fontFamily:FONT,width:"100%",textAlign:"left",marginTop:"0.26rem"}}>+ Grup ekle</button>
+            {lbl("Kategoriler")}
+            <button onClick={()=>setATodoCat("Tümü")} style={sBtn(aTodoCat==="Tümü")}>
+              <span style={{flex:1}}>Tümü</span>
+              <span style={{opacity:0.36,fontSize:"0.62rem"}}>{todos.length}</span>
+            </button>
+            {todoCats.map(cat=>(
+              <button key={cat.id} onClick={()=>setATodoCat(cat.id)} style={sBtn(aTodoCat===cat.id)}>
+                <span>{cat.emoji}</span>
+                <span style={{flex:1}}>{cat.name}</span>
+                <span style={{opacity:0.36,fontSize:"0.58rem",color:STAT_COLORS[cat.stat]}}>{cat.stat}</span>
+                <span style={{opacity:0.36,fontSize:"0.62rem"}}>{todos.filter(t=>t.todoCatId===cat.id).length}</span>
+              </button>
+            ))}
+            <button onClick={()=>setShowCatMgr(true)} style={{background:"transparent",border:`1px dashed ${T.border}`,borderRadius:"6px",padding:"0.26rem 0.52rem",color:T.faint,cursor:"pointer",fontSize:"0.66rem",fontFamily:FONT,width:"100%",textAlign:"left",marginTop:"0.26rem"}}>⚙️ Kategorileri Düzenle</button>
             <div style={{marginTop:"0.55rem",borderTop:`1px solid ${T.border}`,paddingTop:"0.5rem"}}>{lbl("Etiketler")}
               {["", ...allTags].map(tag=><button key={tag} onClick={()=>setATag(tag)} style={sBtn(aTag===tag)}>{tag?`#${tag}`:"Tümü"}</button>)}
             </div>
@@ -454,15 +580,40 @@ export default function App() {
                 </div>
               ))}
             </div>
+            {/* Radar Chart + Stats */}
+            <div style={{display:"grid",gridTemplateColumns:"auto 1fr",gap:"0.7rem",marginBottom:"0.7rem",background:T.card,borderRadius:"10px",padding:"0.88rem",border:`1px solid ${T.border}`}}>
+              <div>
+                <div style={{fontWeight:"700",fontSize:"0.78rem",color:T.text,marginBottom:"0.45rem"}}>⚔️ Nitelikler</div>
+                <RadarChart stats={stats} T={T}/>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:"0.4rem",justifyContent:"center"}}>
+                {STAT_KEYS.map(k=>(
+                  <div key={k}>
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:"0.14rem"}}>
+                      <span style={{fontSize:"0.65rem",fontWeight:"700",color:STAT_COLORS[k]}}>{STAT_ICONS[k]} {STAT_LABELS[k]}</span>
+                      <span style={{fontSize:"0.62rem",color:T.muted,fontWeight:"600"}}>{stats[k]||0}</span>
+                    </div>
+                    <div style={{height:5,background:T.border,borderRadius:3,overflow:"hidden"}}>
+                      <div style={{height:"100%",width:`${Math.min(((stats[k]||0)/200)*100,100)}%`,background:STAT_COLORS[k],borderRadius:3,transition:"width 0.5s"}}/>
+                    </div>
+                  </div>
+                ))}
+                <div style={{marginTop:"0.3rem",fontSize:"0.58rem",color:T.faint}}>Todo tamamladıkça kategori niteliklerin artar!</div>
+              </div>
+            </div>
             <div style={{background:T.card,borderRadius:"10px",padding:"0.88rem",border:`1px solid ${T.border}`,marginBottom:"0.7rem"}}>
               <div style={{fontWeight:"700",fontSize:"0.8rem",color:T.text,letterSpacing:"-0.025em",marginBottom:"0.55rem"}}>📋 Bugünün Todo'ları</div>
               {todayTodos.length===0&&<div style={{fontSize:"0.74rem",color:T.faint}}>Bugün için todo yok.</div>}
-              {todayTodos.map(t=><div key={t.id} style={{display:"flex",alignItems:"center",gap:"0.5rem",padding:"0.28rem 0",borderBottom:`1px solid ${T.border}`}}>
-                <button onClick={()=>toggleTodo(t.id)} style={{width:14,height:14,borderRadius:"50%",border:`2px solid ${t.done?T.acc:T.border}`,background:t.done?T.acc:"transparent",cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>{t.done&&<span style={{color:T.accFg,fontSize:"0.44rem"}}>✓</span>}</button>
-                <span style={{fontSize:"0.74rem",color:t.done?T.faint:T.text,textDecoration:t.done?"line-through":"none",flex:1}}>{t.title}</span>
-                {t.dueTime&&<span style={{fontSize:"0.6rem",color:T.muted}}>⏰ {t.dueTime}</span>}
-                <button onClick={()=>startPom(t.id)} style={{background:"transparent",border:"none",cursor:"pointer",fontSize:"0.74rem",opacity:0.5}}>🍅</button>
-              </div>)}
+              {todayTodos.map(t=>{
+                const cat=getTodoCat(t.todoCatId);
+                return <div key={t.id} style={{display:"flex",alignItems:"center",gap:"0.5rem",padding:"0.28rem 0",borderBottom:`1px solid ${T.border}`}}>
+                  <button onClick={()=>toggleTodo(t.id)} style={{width:14,height:14,borderRadius:"50%",border:`2px solid ${t.done?T.acc:T.border}`,background:t.done?T.acc:"transparent",cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>{t.done&&<span style={{color:T.accFg,fontSize:"0.44rem"}}>✓</span>}</button>
+                  {cat&&<span style={{fontSize:"0.78rem"}} title={cat.name}>{cat.emoji}</span>}
+                  <span style={{fontSize:"0.74rem",color:t.done?T.faint:T.text,textDecoration:t.done?"line-through":"none",flex:1}}>{t.title}</span>
+                  {t.dueTime&&<span style={{fontSize:"0.6rem",color:T.muted}}>⏰ {t.dueTime}</span>}
+                  <button onClick={()=>startPom(t.id)} style={{background:"transparent",border:"none",cursor:"pointer",fontSize:"0.74rem",opacity:0.5}}>🍅</button>
+                </div>;
+              })}
             </div>
             <div style={{background:T.card,borderRadius:"10px",padding:"0.88rem",border:`1px solid ${T.border}`,marginBottom:"0.7rem"}}>
               <div style={{fontWeight:"700",fontSize:"0.8rem",color:T.text,marginBottom:"0.55rem"}}>📅 Bugünün Etkinlikleri</div>
@@ -511,7 +662,10 @@ export default function App() {
           {tab==="todolar"&&<div style={{flex:1,overflowY:"auto",padding:"1.1rem"}}>
             <div style={{maxWidth:660,margin:"0 auto"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"1.1rem",gap:"0.5rem"}}>
-                <h1 style={{fontSize:"0.98rem",fontWeight:"800",color:T.text,margin:0,letterSpacing:"-0.04em"}}>{aGrp==="Tümü"?"Tüm Todolar":getG(aGrp)?.name} <span style={{color:T.faint,fontSize:"0.78rem",fontWeight:"400"}}>({fTodos.length})</span></h1>
+                <h1 style={{fontSize:"0.98rem",fontWeight:"800",color:T.text,margin:0,letterSpacing:"-0.04em"}}>
+                  {aTodoCat==="Tümü"?"Tüm Todolar":(()=>{const c=getTodoCat(aTodoCat);return c?`${c.emoji} ${c.name}`:"Todolar";})()}
+                  <span style={{color:T.faint,fontSize:"0.78rem",fontWeight:"400"}}> ({fTodos.length})</span>
+                </h1>
                 <div style={{display:"flex",gap:"0.35rem"}}>
                   {todos.some(t=>t.done)&&<button onClick={archiveDone} style={{...btn("sec"),fontSize:"0.7rem"}}>📦 Arşivle</button>}
                   <button onClick={()=>{setEditTId(null);setTf(defTf());setShowTF(true);}} style={btn()}>+ Yeni Todo</button>
@@ -520,7 +674,7 @@ export default function App() {
               {fTodos.length===0&&<div style={{textAlign:"center",color:T.faint,padding:"3rem 0",fontSize:"0.78rem"}}><div style={{fontSize:"1.8rem",marginBottom:"0.5rem"}}>✅</div>Henüz todo yok.</div>}
               <div style={{display:"flex",flexDirection:"column",gap:"0.4rem"}}>
                 {fTodos.map(todo=>{
-                  const g=getG(todo.groupId);
+                  const cat=getTodoCat(todo.todoCatId);
                   const ov=todo.dueDate&&todo.dueDate<todayStr()&&!todo.done;
                   const prog=todo.subtasks?.length?Math.round(todo.subtasks.filter(s=>s.done).length/todo.subtasks.length*100):null;
                   const linkedNote=todo.linkedNoteId?notes.find(n=>n.id===todo.linkedNoteId):null;
@@ -532,7 +686,7 @@ export default function App() {
                         {todo.notes&&<div style={{fontSize:"0.66rem",color:T.muted,marginBottom:"0.22rem"}}>{todo.notes}</div>}
                         {linkedNote&&<div style={{fontSize:"0.6rem",color:T.muted,marginBottom:"0.18rem"}}>📄 {linkedNote.title||"Not bağlı"}</div>}
                         <div style={{display:"flex",gap:"0.26rem",flexWrap:"wrap",alignItems:"center",marginBottom:"0.18rem"}}>
-                          {g&&<span style={{fontSize:"0.56rem",fontWeight:"600",background:T.gc[g.ci],borderRadius:"20px",padding:"0.07rem 0.38rem",color:dk?T.text:"#1A1917"}}>{g.name}</span>}
+                          {cat&&<span style={{fontSize:"0.56rem",fontWeight:"600",background:dk?`${STAT_COLORS[cat.stat]}22`:`${STAT_COLORS[cat.stat]}33`,border:`1px solid ${STAT_COLORS[cat.stat]}55`,borderRadius:"20px",padding:"0.07rem 0.38rem",color:STAT_COLORS[cat.stat]}}>{cat.emoji} {cat.name}</span>}
                           <span style={{fontSize:"0.56rem",fontWeight:"600",background:dk?PR_D[todo.priority]:PR_C[todo.priority],borderRadius:"20px",padding:"0.07rem 0.38rem",color:T.text}}>{todo.priority==="yüksek"?"🔴":todo.priority==="orta"?"🟡":"🟢"} {todo.priority}</span>
                           {todo.dueDate&&<span style={{fontSize:"0.56rem",color:ov?"#D04040":T.muted}}>📅 {fmtShort(todo.dueDate)}{todo.dueTime?` ${todo.dueTime}`:""}{ov?" ⚠️":""}</span>}
                           {(todo.tags||[]).map(tag=><span key={tag} style={{fontSize:"0.54rem",background:T.hover,borderRadius:"20px",padding:"0.06rem 0.34rem",color:T.muted,fontWeight:"500"}}>#{tag}</span>)}
@@ -697,7 +851,103 @@ export default function App() {
         </main>
       </div>
 
-      {/* MODALLER */}
+      {/* ══════════════════════════════════════════════════════════════
+          KATEGORİ YÖNETİM PANELİ MODALI
+      ══════════════════════════════════════════════════════════════ */}
+      {showCatMgr&&<div style={modal} onClick={e=>e.target===e.currentTarget&&setShowCatMgr(false)}>
+        <div style={{...mBox,width:"min(96vw,520px)"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"1.1rem"}}>
+            <h2 style={{margin:0,fontSize:"0.92rem",fontWeight:"800",color:T.text,letterSpacing:"-0.035em"}}>⚙️ Kategori Yönetimi</h2>
+            <button onClick={()=>setShowCatMgr(false)} style={{background:"transparent",border:"none",cursor:"pointer",color:T.faint,fontSize:"1rem",padding:0}}>✕</button>
+          </div>
+
+          {/* Bilgi satırı */}
+          <div style={{background:dk?"rgba(74,144,226,0.1)":"rgba(74,144,226,0.08)",border:"1px solid rgba(74,144,226,0.25)",borderRadius:"8px",padding:"0.55rem 0.8rem",marginBottom:"1rem",fontSize:"0.7rem",color:T.muted,lineHeight:1.6}}>
+            Her kategori bir <strong style={{color:T.text}}>RPG niteliği</strong> ile bağlantılıdır. Todo tamamladığında o niteliğin puanı artar ve Radar Chart'ta görünür.
+          </div>
+
+          {/* Mevcut Kategoriler Listesi */}
+          <div style={{marginBottom:"1rem"}}>
+            <div style={{fontSize:"0.62rem",fontWeight:"800",color:T.faint,letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:"0.5rem"}}>Mevcut Kategoriler</div>
+            <div style={{display:"flex",flexDirection:"column",gap:"0.32rem",maxHeight:"240px",overflowY:"auto"}}>
+              {todoCats.map(cat=>(
+                <div key={cat.id} style={{display:"flex",alignItems:"center",gap:"0.55rem",padding:"0.55rem 0.7rem",background:T.hover,borderRadius:"8px",border:`1px solid ${T.border}`}}>
+                  <span style={{fontSize:"1.1rem",flexShrink:0}}>{cat.emoji}</span>
+                  <span style={{flex:1,fontSize:"0.78rem",fontWeight:"600",color:T.text}}>{cat.name}</span>
+                  <div style={{display:"flex",alignItems:"center",gap:"0.25rem",background:`${STAT_COLORS[cat.stat]}22`,border:`1px solid ${STAT_COLORS[cat.stat]}44`,borderRadius:"20px",padding:"0.08rem 0.45rem"}}>
+                    <span style={{fontSize:"0.7rem"}}>{STAT_ICONS[cat.stat]}</span>
+                    <span style={{fontSize:"0.62rem",fontWeight:"700",color:STAT_COLORS[cat.stat]}}>{cat.stat}</span>
+                  </div>
+                  <span style={{fontSize:"0.58rem",color:T.faint,minWidth:28,textAlign:"right"}}>{todos.filter(t=>t.todoCatId===cat.id).length} todo</span>
+                  <button onClick={()=>openEditCat(cat)} title="Düzenle" style={{background:"transparent",border:"none",cursor:"pointer",fontSize:"0.72rem",opacity:0.45,padding:"2px",transition:"opacity 0.15s"}} onMouseEnter={e=>e.currentTarget.style.opacity=1} onMouseLeave={e=>e.currentTarget.style.opacity=0.45}>✏️</button>
+                  <button onClick={()=>requestDeleteCat(cat)} title="Sil" style={{background:"transparent",border:"none",cursor:"pointer",fontSize:"0.72rem",opacity:0.45,padding:"2px",transition:"opacity 0.15s",color:"#D04040"}} onMouseEnter={e=>e.currentTarget.style.opacity=1} onMouseLeave={e=>e.currentTarget.style.opacity=0.45}>🗑️</button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Yeni / Düzenleme Formu */}
+          <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:"10px",padding:"0.9rem",marginBottom:"0.7rem"}}>
+            <div style={{fontSize:"0.65rem",fontWeight:"800",color:T.faint,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:"0.6rem"}}>{editCatId?"Kategoriyi Düzenle":"Yeni Kategori Ekle"}</div>
+            <div style={{display:"grid",gridTemplateColumns:"56px 1fr",gap:"0.55rem",marginBottom:"0.55rem"}}>
+              <div>
+                <label style={{fontSize:"0.58rem",color:T.muted,display:"block",marginBottom:"0.22rem",fontWeight:"600"}}>Emoji</label>
+                <input value={catForm.emoji} onChange={e=>setCatForm(f=>({...f,emoji:e.target.value}))} maxLength={2} style={{...inp,textAlign:"center",fontSize:"1.2rem",padding:"0.35rem 0.2rem"}}/>
+              </div>
+              <div>
+                <label style={{fontSize:"0.58rem",color:T.muted,display:"block",marginBottom:"0.22rem",fontWeight:"600"}}>Kategori Adı</label>
+                <input value={catForm.name} onChange={e=>setCatForm(f=>({...f,name:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&saveCat()} placeholder="örn. Müzik, Spor, Finans…" autoFocus={!!editCatId} style={inp}/>
+              </div>
+            </div>
+            <div style={{marginBottom:"0.7rem"}}>
+              <label style={{fontSize:"0.58rem",color:T.muted,display:"block",marginBottom:"0.32rem",fontWeight:"600"}}>Bağlı Nitelik (todo tamamlayınca artar)</label>
+              <div style={{display:"flex",gap:"0.4rem",flexWrap:"wrap"}}>
+                {STAT_KEYS.map(k=>(
+                  <button key={k} onClick={()=>setCatForm(f=>({...f,stat:k}))}
+                    style={{background:catForm.stat===k?STAT_COLORS[k]:"transparent",color:catForm.stat===k?"#fff":STAT_COLORS[k],border:`2px solid ${STAT_COLORS[k]}`,borderRadius:"8px",padding:"0.32rem 0.7rem",cursor:"pointer",fontFamily:FONT,fontSize:"0.72rem",fontWeight:"700",transition:"all 0.15s"}}>
+                    {STAT_ICONS[k]} {k} — {STAT_LABELS[k]}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:"0.38rem",justifyContent:"flex-end"}}>
+              {editCatId&&<button onClick={()=>{setEditCatId(null);setCatForm({name:"",emoji:"📋",stat:"FOC"});}} style={btn("sec")}>İptal</button>}
+              <button onClick={saveCat} style={{...btn(),opacity:catForm.name.trim()?1:0.4,cursor:catForm.name.trim()?"pointer":"not-allowed"}}>
+                {editCatId?"Güncelle":"+ Ekle"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>}
+
+      {/* Silme Onay Modalı */}
+      {deleteCatConfirm&&<div style={{...modal,zIndex:400}} onClick={e=>e.target===e.currentTarget&&setDeleteCatConfirm(null)}>
+        <div style={{...mBox,width:"min(96vw,360px)",padding:"1.3rem"}}>
+          <div style={{fontSize:"1.8rem",textAlign:"center",marginBottom:"0.7rem"}}>⚠️</div>
+          <h3 style={{margin:"0 0 0.55rem",fontSize:"0.88rem",fontWeight:"800",color:T.text,textAlign:"center"}}>Kategoriyi Sil</h3>
+          <p style={{margin:"0 0 1rem",fontSize:"0.76rem",color:T.muted,textAlign:"center",lineHeight:1.6}}>
+            <strong style={{color:T.text}}>"{deleteCatConfirm.catName}"</strong> kategorisinde <strong style={{color:"#E2934A"}}>{deleteCatConfirm.inUse} todo</strong> var.
+            Bu todolar hangi kategoriye taşınsın?
+          </p>
+          <div style={{marginBottom:"1rem"}}>
+            <label style={{fontSize:"0.62rem",color:T.muted,display:"block",marginBottom:"0.26rem",fontWeight:"600"}}>Yeni Kategori</label>
+            <select id="fallbackCatSel" defaultValue={todoCats.find(c=>c.id!==deleteCatConfirm.catId)?.id||""} style={inp}>
+              {todoCats.filter(c=>c.id!==deleteCatConfirm.catId).map(c=>(
+                <option key={c.id} value={c.id}>{c.emoji} {c.name}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{display:"flex",gap:"0.45rem"}}>
+            <button onClick={()=>setDeleteCatConfirm(null)} style={{...btn("sec"),flex:1}}>İptal</button>
+            <button onClick={()=>{
+              const sel=document.getElementById("fallbackCatSel");
+              doDeleteCat(deleteCatConfirm.catId, sel?.value||null);
+            }} style={{...btn(),flex:1,background:"#D04040",border:"none",color:"#fff"}}>Sil & Taşı</button>
+          </div>
+        </div>
+      </div>}
+
+      {/* MODALLER — Etkinlik, Not, Todo, Grup */}
       {showEF&&<div style={modal} onClick={e=>e.target===e.currentTarget&&setShowEF(false)}>
         <div style={mBox}>
           <h2 style={{margin:"0 0 0.95rem",fontSize:"0.88rem",fontWeight:"800",color:T.text,letterSpacing:"-0.035em"}}>{editEId?"Etkinliği Düzenle":"Yeni Etkinlik"}</h2>
@@ -755,7 +1005,16 @@ export default function App() {
           <input ref={tTRef} value={tf.title} onChange={e=>setTf(f=>({...f,title:e.target.value}))} placeholder="Todo başlığı" autoFocus style={{...inp,border:"none",borderBottom:`1.5px solid ${T.border}`,borderRadius:0,paddingLeft:0,paddingRight:0,fontSize:"0.9rem",fontWeight:"700",marginBottom:"0.82rem",background:"transparent"}}/>
           <textarea value={tf.notes} onChange={e=>setTf(f=>({...f,notes:e.target.value}))} placeholder="Notlar (isteğe bağlı)" rows={2} style={{...inp,resize:"vertical",lineHeight:1.6,marginBottom:"0.82rem"}}/>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0.55rem",marginBottom:"0.82rem"}}>
-            <div><label style={{fontSize:"0.62rem",color:T.muted,display:"block",marginBottom:"0.22rem",fontWeight:"600"}}>Grup</label><select value={tf.groupId} onChange={e=>setTf(f=>({...f,groupId:e.target.value}))} style={inp}>{groups.map(g=><option key={g.id} value={g.id}>{g.name}</option>)}</select></div>
+            {/* ── Kategori dropdown (dinamik) ── */}
+            <div style={{gridColumn:"1/-1"}}>
+              <label style={{fontSize:"0.62rem",color:T.muted,display:"block",marginBottom:"0.22rem",fontWeight:"600"}}>Kategori</label>
+              <select value={tf.todoCatId} onChange={e=>setTf(f=>({...f,todoCatId:e.target.value}))} style={inp}>
+                {todoCats.map(c=>(
+                  <option key={c.id} value={c.id}>{c.emoji} {c.name} [{c.stat}]</option>
+                ))}
+              </select>
+              {tf.todoCatId&&(()=>{const c=getTodoCat(tf.todoCatId);return c?<div style={{marginTop:"0.22rem",fontSize:"0.6rem",color:STAT_COLORS[c.stat]}}>✓ Tamamlayınca {STAT_ICONS[c.stat]} {STAT_LABELS[c.stat]} +10 puan</div>:null;})()}
+            </div>
             <div><label style={{fontSize:"0.62rem",color:T.muted,display:"block",marginBottom:"0.22rem",fontWeight:"600"}}>Öncelik</label><select value={tf.priority} onChange={e=>setTf(f=>({...f,priority:e.target.value}))} style={inp}><option value="yüksek">🔴 Yüksek</option><option value="orta">🟡 Orta</option><option value="düşük">🟢 Düşük</option></select></div>
             <div><label style={{fontSize:"0.62rem",color:T.muted,display:"block",marginBottom:"0.22rem",fontWeight:"600"}}>Bitiş Tarihi</label><input type="date" value={tf.dueDate} onChange={e=>setTf(f=>({...f,dueDate:e.target.value}))} style={inp}/></div>
             <div><label style={{fontSize:"0.62rem",color:T.muted,display:"block",marginBottom:"0.22rem",fontWeight:"600"}}>⏰ Saat</label><input type="time" value={tf.dueTime} onChange={e=>setTf(f=>({...f,dueTime:e.target.value}))} style={inp}/></div>
@@ -775,15 +1034,6 @@ export default function App() {
             <div style={{display:"flex",gap:"0.28rem",marginTop:"0.35rem"}}><input value={newSub} onChange={e=>setNewSub(e.target.value)} onKeyDown={e=>e.key==="Enter"&&(e.preventDefault(),addSub())} placeholder="Alt görev ekle…" style={inp}/><button onClick={addSub} style={{...btn(),padding:"0.46rem 0.7rem"}}>+</button></div>
           </div>
           <div style={{display:"flex",gap:"0.38rem",justifyContent:"flex-end"}}><button onClick={()=>setShowTF(false)} style={btn("sec")}>İptal</button><button onClick={submitTodo} style={btn()}>Kaydet</button></div>
-        </div>
-      </div>}
-
-      {showGF&&<div style={modal} onClick={e=>e.target===e.currentTarget&&setShowGF(false)}>
-        <div style={{...mBox,width:"min(96vw,295px)"}}>
-          <h2 style={{margin:"0 0 0.95rem",fontSize:"0.88rem",fontWeight:"800",color:T.text,letterSpacing:"-0.035em"}}>Yeni Grup</h2>
-          <input value={gf.name} onChange={e=>setGf(f=>({...f,name:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&addGroup()} placeholder="Grup adı" style={{...inp,marginBottom:"0.82rem"}} autoFocus/>
-          <div style={{marginBottom:"0.95rem"}}><label style={{fontSize:"0.62rem",color:T.muted,display:"block",marginBottom:"0.32rem",fontWeight:"600"}}>Renk</label><div style={{display:"flex",gap:"0.4rem"}}>{T.gc.map((c,i)=><button key={i} onClick={()=>setGf(f=>({...f,ci:i}))} style={{width:18,height:18,borderRadius:"50%",background:c,border:gf.ci===i?`2.5px solid ${T.acc}`:"2px solid transparent",cursor:"pointer"}}/>)}</div></div>
-          <div style={{display:"flex",gap:"0.38rem",justifyContent:"flex-end"}}><button onClick={()=>setShowGF(false)} style={btn("sec")}>İptal</button><button onClick={addGroup} style={btn()}>Oluştur</button></div>
         </div>
       </div>}
     </div>
